@@ -3,9 +3,11 @@ import os
 import itertools
 import random
 import copy
+import subprocess
 from PIL import Image
 
 ffmpeg = "ffmpeg.exe"
+ffprobe = "ffprobe.exe"
 
 output_width = 1280
 output_height = 800
@@ -83,7 +85,12 @@ else:
     y_directions = [zoom_direction.split("-")[0]]
     z_directions = [zoom_direction.split("-")[2]]
 
+
+IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
+VIDEO_EXTENSIONS = ["mp4", "mpg", "avi"]
+
 output_ratio = output_width / output_height
+last_offset_s = 0
 
 # workaround a float bug in zoompan filter that causes a jitter/shake
 # https://superuser.com/questions/1112617/ffmpeg-smooth-zoompan-with-no-jiggle/1112680#1112680
@@ -93,32 +100,62 @@ supersample_height = output_height*4
 
 slides = []
 for input in args.input_files:
-    im = Image.open(input)
-    width, height = im.size
-    ratio = width / height
+
+    extension = input.split(".")[-1]
     
-    slide = {}
-    slide["file"] = input
-    slide["width"] = width
-    slide["height"] = height
-    
-    if scale_mode == "auto":
-        slide["scale"] = "pad" if abs(ratio - output_ratio) > 0.5 else "crop_center"
-    else:
-        slide["scale"] = scale_mode
-    
-    slide["direction_x"] = random.choice(x_directions)
-    slide["direction_y"] = random.choice(y_directions)
-    slide["direction_z"] = random.choice(z_directions)
-    
-    slides.append(slide)
+    if extension in VIDEO_EXTENSIONS:
+        duration = subprocess.check_output("%s -show_entries format=duration -v error -of default=noprint_wrappers=1:nokey=1 %s" %(ffprobe, input))
+        
+        slide = {}
+        slide["video"] = True
+        slide["file"] = input
+        slide["duration_s"] = float(duration)
+        slide["fade_duration_s"] = fade_duration_s
+        slide["offset_s"] = last_offset_s
+
+        slides.append(slide)
+            
+        # calculate next offset
+        last_offset_s = last_offset_s + (slide["duration_s"] - slide["fade_duration_s"])
+
+  
+    elif extension in IMAGE_EXTENSIONS:
+        im = Image.open(input)
+        width, height = im.size
+        ratio = width / height
+        
+        slide = {}
+        slide["file"] = input
+        slide["width"] = width
+        slide["height"] = height
+
+        if scale_mode == "auto":
+            slide["scale"] = "pad" if abs(ratio - output_ratio) > 0.5 else "crop_center"
+        else:
+            slide["scale"] = scale_mode
+        
+        slide["direction_x"] = random.choice(x_directions)
+        slide["direction_y"] = random.choice(y_directions)
+        slide["direction_z"] = random.choice(z_directions)
+        slide["video"] = False
+        slide["duration_s"] = slide_duration_s
+        slide["fade_duration_s"] = fade_duration_s
+        slide["offset_s"] = last_offset_s
+        
+        slides.append(slide)
+        
+        # calculate next offset
+        last_offset_s = last_offset_s + (slide["duration_s"] - slide["fade_duration_s"])
+        
     
     
 if loopable:
-    slides.append(slides[0])
+    first_slide = copy.copy(slides[0])
+    first_slide["offset_s"] = last_offset_s
+    slides.append(first_slide)
 
 # Calculate total duration
-total_duration = (slide_duration_s-fade_duration_s)*len(slides)+fade_duration_s
+total_duration = sum([slide["duration_s"]  - slide["fade_duration_s"] for slide in slides])+slides[-1]["fade_duration_s"]
 
 # Base black image
 filter_chains = [
@@ -126,18 +163,18 @@ filter_chains = [
 ]
 
 # create zoom/pan effect of images
-for i, slide in enumerate(slides):
-    filters = ["format=pix_fmts=yuva420p"]
+for slide in [slide for slide in slides if slide["video"] is not True]:
+    slide_filters = ["format=pix_fmts=yuva420p"]
 
     ratio = slide["width"]/slide["height"]
     
     # Crop to make video divisible
-    filters.append("crop=w=2*floor(iw/2):h=2*floor(ih/2)")
+    slide_filters.append("crop=w=2*floor(iw/2):h=2*floor(ih/2)")
     
     # Pad filter
     if slide["scale"] == "pad" or slide["scale"] == "pan":
         width, height = [slide["width"], int(slide["width"]/output_ratio)] if ratio > output_ratio else [int(slide["height"]*output_ratio), slide["height"]]
-        filters.append("pad=w=%s:h=%s:x='(ow-iw)/2':y='(oh-ih)/2'" %(width, height))
+        slide_filters.append("pad=w=%s:h=%s:x='(ow-iw)/2':y='(oh-ih)/2'" %(width, height))
         
     # Zoom/pan filter
     z_step = zoom_rate/(fps*slide_duration_s)
@@ -218,21 +255,35 @@ for i, slide in enumerate(slides):
     if slide["scale"] == "pan" or slide["scale"] == "pad":
         width, height = [output_width, output_height]
 
-    filters.append("scale=%sx%s,zoompan=z='%s':x='%s':y='%s':fps=%s:d=%s*%s:s=%sx%s" %(supersample_width, supersample_height, z, x, y, fps, fps, slide_duration_s, width, height))
+    slide_filters.append("scale=%sx%s,zoompan=z='%s':x='%s':y='%s':fps=%s:d=%s*%s:s=%sx%s" %(supersample_width, supersample_height, z, x, y, fps, fps, slide_duration_s, width, height))
     
     # Crop filter
     if slide["scale"] == "crop_center":
         crop_x = "(iw-ow)/2"
         crop_y = "(ih-oh)/2"
-        filters.append("crop=w=%s:h=%s:x='%s':y='%s'" %(output_width, output_height, crop_x, crop_y))
+        slide_filters.append("crop=w=%s:h=%s:x='%s':y='%s'" %(output_width, output_height, crop_x, crop_y))
+        
+    # save the filters for rendering
+    slide["filters"] = slide_filters
 
-    # Fade filter
-    if fade_duration_s > 0:
-        filters.append("fade=t=in:st=0:d=%s:alpha=%s" %(fade_duration_s, 0 if i == 0 else 1))
-        filters.append("fade=t=out:st=%s:d=%s:alpha=%s" %(slide_duration_s-fade_duration_s, fade_duration_s, 0 if i == len(slides) - 1 else 1))
+    
+for i, slide in enumerate(slides):    
+    filters = []
+    
+    # include the ken-burns effect image filters
+    if not slide["video"]:
+        filters.extend(slide["filters"])
+    # scale videos
+    else:
+        filters.append("scale=w=%s:h=-1" %(output_width))
+        
+    # Fade filter   
+    if slide["fade_duration_s"] > 0:
+        filters.append("fade=t=in:st=0:d=%s:alpha=%s" %(slide["fade_duration_s"], 0 if i == 0 else 1))
+        filters.append("fade=t=out:st=%s:d=%s:alpha=%s" %(slide["duration_s"]-slide["fade_duration_s"], slide["fade_duration_s"], 0 if i == len(slides) - 1 else 1))
   
     # Time
-    filters.append("setpts=PTS-STARTPTS+%s*%s/TB" %(i, slide_duration_s-fade_duration_s))
+    filters.append("setpts=PTS-STARTPTS+%s/TB" %(slide["offset_s"]))
 
     # All together now
     filter_chains.append("[%s:v]" %(i) + ", ".join(filters) + "[v%s]" %(i)) 
@@ -255,8 +306,12 @@ cmd = [ ffmpeg, "-hide_banner",
         "-i %s" %(audio) if audio else "",
         # filters
         "-filter_complex \"%s\"" % (";".join(filter_chains)),
-        "-ss %s -t %s" %(fade_duration_s,(slide_duration_s-fade_duration_s)*(len(slides)-1)) if loopable else "-t %s" %(total_duration),
+        # define duration
+        # if video should be loopable, skip the start fade-in (-ss) and the end fade-out (video is stopped after the fade-in of the last image which is the same as the first-image)
+        "-ss %s -t %s" %(slides[0]["fade_duration_s"], sum([slide["duration_s"]  - slide["fade_duration_s"] for slide in slides[:-1]])) if loopable else "-t %s" %(total_duration),
+        # define output
         "-map", "[out]",
+        # audio is last input, use this for audio
         "-map %s:a" %(len(slides)) if audio else "",
         "-c:v", "libx264", args.output_file
 ]
