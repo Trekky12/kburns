@@ -19,7 +19,6 @@ zoom_direction = "random"
 scale_mode = "auto"
 dump_filter_graph = False
 loopable = False
-audio = None
 overwrite = False
 
 parser = argparse.ArgumentParser()
@@ -37,7 +36,6 @@ parser.add_argument("-zr", "--zoom-rate", metavar='RATE', type=float, help="Zoom
 parser.add_argument("-sm", "--scale-mode", metavar='SCALE_MODE', choices=["auto", "pad", "pan", "crop_center"], help="Scale mode (pad, crop_center, pan) (default: %s)" %(scale_mode))
 parser.add_argument("-dump", "--dump-filter-graph", action='store_true', help="Dump filter graph to '<OUTPUT>.filtergraph.png' for debugging")
 parser.add_argument("-l", "--loopable", action='store_true', help="Create loopable video")
-parser.add_argument("-a", "--audio", metavar='FILE', help="Use FILE as audio track")
 parser.add_argument("-y", action='store_true', help="Overwrite output file without asking")
 
 parser.add_argument("input_files", nargs='*')
@@ -71,9 +69,6 @@ if args.scale_mode:
 dump_filter_graph = args.dump_filter_graph    
 loopable = args.loopable
 
-if args.audio:
-    audio = args.audio
-
 overwrite = args.y    
    
 if zoom_direction == "random":
@@ -88,6 +83,7 @@ else:
 
 IMAGE_EXTENSIONS = ["jpg", "jpeg", "png"]
 VIDEO_EXTENSIONS = ["mp4", "mpg", "avi"]
+AUDIO_EXTENSIONS = ["mp3", "ogg", "flac"]
 
 output_ratio = output_width / output_height
 last_offset_s = 0
@@ -99,6 +95,7 @@ supersample_width = output_width*4
 supersample_height = output_height*4
 
 slides = []
+audio = []
 for input in args.input_files:
 
     extension = input.split(".")[-1]
@@ -147,6 +144,8 @@ for input in args.input_files:
         # calculate next offset
         last_offset_s = last_offset_s + (slide["duration_s"] - slide["fade_duration_s"])
         
+    elif extension in AUDIO_EXTENSIONS:
+        audio.append(input)
     
     
 if loopable:
@@ -298,22 +297,33 @@ for i, slide in enumerate(slides):
     filter_chains.append("[%s][%s]%s[%s]" %(input_1, input_2, overlay_filter, output))
 
 
+# merge background tracks
+music_input_offset = len(slides)
+background_audio = ["[%s:a]" %(i+music_input_offset) for i, track in enumerate(audio)]
+filter_chains.append("%s concat=n=%s:v=0:a=1[background_audio]" %("".join(background_audio), len(audio)))
+
+# fade background music in/out
+filter_chains.append("[background_audio]afade=t=in:st=%s:d=%s,afade=t=out:st=%s:d=%s[aout]" %(0, slides[0]["fade_duration_s"], total_duration-slides[-1]["fade_duration_s"], slides[-1]["fade_duration_s"]))
+
 # Run ffmpeg
 cmd = [ ffmpeg, "-hide_banner", 
         "-y" if overwrite else "",
         # slides
         " ".join(["-i %s" %(slide["file"]) for slide in slides]),
-        "-i %s" %(audio) if audio else "",
+        " ".join(["-i %s" %(track) for track in audio]),
         # filters
         "-filter_complex \"%s\"" % (";".join(filter_chains)),
         # define duration
         # if video should be loopable, skip the start fade-in (-ss) and the end fade-out (video is stopped after the fade-in of the last image which is the same as the first-image)
         "-ss %s -t %s" %(slides[0]["fade_duration_s"], sum([slide["duration_s"]  - slide["fade_duration_s"] for slide in slides[:-1]])) if loopable else "-t %s" %(total_duration),
         # define output
-        "-map", "[out]",
-        # audio is last input, use this for audio
-        "-map %s:a" %(len(slides)) if audio else "",
-        "-c:v", "libx264", args.output_file
+        "-map", "[out]:v",
+        "-c:v", "libx264",
+        "-map [aout]:a",
+        # audio compression and bitrate
+        "-c:a", "aac", 
+        "-b:a", "160k", 
+         args.output_file
 ]
 
 os.system(" ".join(cmd))
