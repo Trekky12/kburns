@@ -85,6 +85,12 @@ else:
 
 output_ratio = output_width / output_height
 
+# workaround a float bug in zoompan filter that causes a jitter/shake
+# https://superuser.com/questions/1112617/ffmpeg-smooth-zoompan-with-no-jiggle/1112680#1112680
+# https://trac.ffmpeg.org/ticket/4298
+supersample_width = output_width*4
+supersample_height = output_height*4
+
 slides = []
 for input in args.input_files:
     im = Image.open(input)
@@ -212,7 +218,7 @@ for i, slide in enumerate(slides):
     if slide["scale"] == "pan" or slide["scale"] == "pad":
         width, height = [output_width, output_height]
 
-    filters.append("zoompan=z='%s':x='%s':y='%s':fps=%s:d=%s*%s:s=%sx%s" %(z, x, y, fps, fps, slide_duration_s, width, height))
+    filters.append("scale=%sx%s,zoompan=z='%s':x='%s':y='%s':fps=%s:d=%s*%s:s=%sx%s" %(supersample_width, supersample_height, z, x, y, fps, fps, slide_duration_s, width, height))
     
     # Crop filter
     if slide["scale"] == "crop_center":
