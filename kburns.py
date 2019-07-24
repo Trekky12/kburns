@@ -327,36 +327,38 @@ for i, slide in enumerate(slides):
 # merge background tracks
 music_input_offset = len(slides)
 background_audio = ["[%s:a]" %(i+music_input_offset) for i, track in enumerate(audio)]
-filter_chains.append("%s concat=n=%s:v=0:a=1[background_audio]" %("".join(background_audio), len(audio)))
+if len(background_audio) > 0:
+    filter_chains.append("%s concat=n=%s:v=0:a=1[background_audio]" %("".join(background_audio), len(audio)))
 
-# extract background audio sections between videos
-background_sections = []
-# is it starting with a video or an image?
-section_start_slide = None if slides[0]["video"] else slides[0]
-for slide in slides:
-    # is it a video and we have a start value => end of this section
-    if slide["video"] and slide["has_audio"] and section_start_slide is not None:
-        background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": slide["offset_s"], "fade_out": slide["fade_duration_s"] })
-        section_start_slide = None
-    # is it a image but the previous one was a video => start new section
-    if not slide["video"] and section_start_slide is None:
-        section_start_slide = slide
+    # extract background audio sections between videos
+    background_sections = []
+    # is it starting with a video or an image?
+    section_start_slide = None if slides[0]["video"] else slides[0]
+    for slide in slides:
+        # is it a video and we have a start value => end of this section
+        if slide["video"] and slide["has_audio"] and section_start_slide is not None:
+            background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": slide["offset_s"], "fade_out": slide["fade_duration_s"] })
+            section_start_slide = None
+        # is it a image but the previous one was a video => start new section
+        if not slide["video"] and section_start_slide is None:
+            section_start_slide = slide
 
-# the last section is ending with an image => end of section is end generated video
-if section_start_slide is not None:
-    background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": total_duration-slides[-1]["fade_duration_s"] })
-    
-# split the background tracks into the necessary copies for the fades
-filter_chains.append("[background_audio]asplit=%s %s" %(len(background_sections), "".join(["[b%s]" %(i) for i, section in enumerate(background_sections)])))
+    # the last section is ending with an image => end of section is end generated video
+    if section_start_slide is not None:
+        background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": total_duration-slides[-1]["fade_duration_s"] })
+        
+    # split the background tracks into the necessary copies for the fades
+    filter_chains.append("[background_audio]asplit=%s %s" %(len(background_sections), "".join(["[b%s]" %(i) for i, section in enumerate(background_sections)])))
 
-# fade background music in/out
-for i, section in enumerate(background_sections):
-    audio_tracks.append("[b%sf]" %(i))
-    filter_chains.append("[b%s]afade=t=in:st=%s:d=%s,afade=t=out:st=%s:d=%s[b%sf]" %(i, section["start"], fade_duration_s, section["end"], fade_duration_s, i))
+    # fade background music in/out
+    for i, section in enumerate(background_sections):
+        audio_tracks.append("[b%sf]" %(i))
+        filter_chains.append("[b%s]afade=t=in:st=%s:d=%s,afade=t=out:st=%s:d=%s[b%sf]" %(i, section["start"], fade_duration_s, section["end"], fade_duration_s, i))
 
 
-# video audio and background sections should be merged     
-filter_chains.append("%s amix=inputs=%s[aout]" %("".join(audio_tracks), len(audio_tracks))) 
+# video audio and background sections should be merged 
+if len(audio_tracks) > 0:    
+    filter_chains.append("%s amix=inputs=%s[aout]" %("".join(audio_tracks), len(audio_tracks))) 
 
 # =====================================    
 #       FINAL VIDEO
@@ -376,10 +378,10 @@ cmd = [ ffmpeg, "-hide_banner",
         # define output
         "-map", "[out]:v",
         "-c:v", "libx264",
-        "-map [aout]:a",
+        "-map [aout]:a" if len(audio_tracks) > 0 else "",
         # audio compression and bitrate
-        "-c:a", "aac", 
-        "-b:a", "160k", 
+        "-c:a", "aac" if len(audio_tracks) > 0 else "", 
+        "-b:a", "160k" if len(audio_tracks) > 0 else "", 
          args.output_file
 ]
 
