@@ -102,11 +102,13 @@ for input in args.input_files:
     
     if extension in VIDEO_EXTENSIONS:
         duration = subprocess.check_output("%s -show_entries format=duration -v error -of default=noprint_wrappers=1:nokey=1 %s" %(ffprobe, input))
+        has_audio = subprocess.check_output("%s -select_streams a -show_entries stream=codec_type -v error -of default=noprint_wrappers=1:nokey=1 %s" %(ffprobe, input))
         
         slide = {}
         slide["video"] = True
         slide["file"] = input
         slide["duration_s"] = float(duration)
+        slide["has_audio"] = "audio" in str(has_audio)
         slide["fade_duration_s"] = fade_duration_s
         slide["offset_s"] = last_offset_s
 
@@ -160,6 +162,10 @@ total_duration = sum([slide["duration_s"]  - slide["fade_duration_s"] for slide 
 filter_chains = [
   "color=c=black:r=%s:size=%sx%s:d=%s[black]" %(fps, output_width, output_height, total_duration)
 ]
+
+# =====================================    
+#       IMAGES
+# =====================================    
 
 # create zoom/pan effect of images
 for slide in [slide for slide in slides if slide["video"] is not True]:
@@ -265,6 +271,9 @@ for slide in [slide for slide in slides if slide["video"] is not True]:
     # save the filters for rendering
     slide["filters"] = slide_filters
 
+# =====================================    
+#       IMAGE AND VIDEOS
+# =====================================    
     
 for i, slide in enumerate(slides):    
     filters = []
@@ -295,15 +304,63 @@ for i, slide in enumerate(slides):
     overlay_filter = "overlay" + ("=format=yuv420" if i == len(slides) - 1 else "")
     
     filter_chains.append("[%s][%s]%s[%s]" %(input_1, input_2, overlay_filter, output))
-
+    
+    
+# =====================================    
+#       AUDIO   
+# =====================================    
+# audio from video slides
+audio_tracks = []
+for i, slide in enumerate(slides):
+    if slide["video"] and slide["has_audio"]:
+        audio_tracks.append("[a%s]" %(i))
+        
+        filters = []
+        # Fade music in filter
+        if slide["fade_duration_s"] > 0:
+            filters.append("afade=t=in:st=0:d=%s" %(slide["fade_duration_s"]))
+            filters.append("afade=t=out:st=%s:d=%s" %(slide["duration_s"] - slide["fade_duration_s"], slide["fade_duration_s"] ))
+        filters.append("adelay=%s|%s" %( int(slide["offset_s"]*1000), int(slide["offset_s"]*1000)))
+        
+        filter_chains.append("[%s:a] %s [a%s]" %(i, ",".join(filters), i))
 
 # merge background tracks
 music_input_offset = len(slides)
 background_audio = ["[%s:a]" %(i+music_input_offset) for i, track in enumerate(audio)]
 filter_chains.append("%s concat=n=%s:v=0:a=1[background_audio]" %("".join(background_audio), len(audio)))
 
+# extract background audio sections between videos
+background_sections = []
+# is it starting with a video or an image?
+section_start_slide = None if slides[0]["video"] else slides[0]
+for slide in slides:
+    # is it a video and we have a start value => end of this section
+    if slide["video"] and slide["has_audio"] and section_start_slide is not None:
+        background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": slide["offset_s"], "fade_out": slide["fade_duration_s"] })
+        section_start_slide = None
+    # is it a image but the previous one was a video => start new section
+    if not slide["video"] and section_start_slide is None:
+        section_start_slide = slide
+
+# the last section is ending with an image => end of section is end generated video
+if section_start_slide is not None:
+    background_sections.append({ "start": section_start_slide["offset_s"], "fade_in": section_start_slide["fade_duration_s"], "end": total_duration-slides[-1]["fade_duration_s"] })
+    
+# split the background tracks into the necessary copies for the fades
+filter_chains.append("[background_audio]asplit=%s %s" %(len(background_sections), "".join(["[b%s]" %(i) for i, section in enumerate(background_sections)])))
+
 # fade background music in/out
-filter_chains.append("[background_audio]afade=t=in:st=%s:d=%s,afade=t=out:st=%s:d=%s[aout]" %(0, slides[0]["fade_duration_s"], total_duration-slides[-1]["fade_duration_s"], slides[-1]["fade_duration_s"]))
+for i, section in enumerate(background_sections):
+    audio_tracks.append("[b%sf]" %(i))
+    filter_chains.append("[b%s]afade=t=in:st=%s:d=%s,afade=t=out:st=%s:d=%s[b%sf]" %(i, section["start"], fade_duration_s, section["end"], fade_duration_s, i))
+
+
+# video audio and background sections should be merged     
+filter_chains.append("%s amix=inputs=%s[aout]" %("".join(audio_tracks), len(audio_tracks))) 
+
+# =====================================    
+#       FINAL VIDEO
+# =====================================    
 
 # Run ffmpeg
 cmd = [ ffmpeg, "-hide_banner", 
