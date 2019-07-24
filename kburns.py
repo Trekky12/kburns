@@ -41,27 +41,27 @@ parser.add_argument("output_file")
 
 args = parser.parse_args()
     
-if args.size:
+if args.size is not None:
     size = args.size.split("x")
     output_width = int(size[0])
     output_height = int(size[1])
  
-if args.slide_duration: 
+if args.slide_duration is not None: 
     slide_duration_s = args.slide_duration
 
-if args.fade_duration: 
+if args.fade_duration is not None: 
     fade_duration_s = args.fade_duration    
     
-if args.fps: 
+if args.fps is not None: 
     fps = args.fps    
 
-if args.zoom_direction:
+if args.zoom_direction is not None:
     zoom_direction = args.zoom_direction       
     
-if args.zoom_rate:
+if args.zoom_rate is not None:
     zoom_rate = args.zoom_rate    
     
-if args.scale_mode:
+if args.scale_mode is not None:
     scale_mode = args.scale_mode
       
 loopable = args.loopable
@@ -278,7 +278,7 @@ for i, slide in enumerate(slides):
     # include the ken-burns effect image filters
     if not slide["video"]:
         filters.extend(slide["filters"])
-    # scale videos
+    # scale video to fit the width
     else:
         filters.append("scale=w=%s:h=-1" %(output_width))
         
@@ -286,7 +286,9 @@ for i, slide in enumerate(slides):
     if slide["fade_duration_s"] > 0:
         filters.append("fade=t=in:st=0:d=%s:alpha=%s" %(slide["fade_duration_s"], 0 if i == 0 else 1))
         filters.append("fade=t=out:st=%s:d=%s:alpha=%s" %(slide["duration_s"]-slide["fade_duration_s"], slide["fade_duration_s"], 0 if i == len(slides) - 1 else 1))
-  
+    else:
+        filters.append("tpad=stop_duration=%s:color=black" %(slide["duration_s"]))
+
     # Time
     filters.append("setpts=PTS-STARTPTS+%s/TB" %(slide["offset_s"]))
 
