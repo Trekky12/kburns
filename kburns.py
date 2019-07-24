@@ -17,7 +17,6 @@ fps = 60
 zoom_rate = 0.1
 zoom_direction = "random"
 scale_mode = "auto"
-dump_filter_graph = False
 loopable = False
 overwrite = False
 
@@ -34,7 +33,6 @@ parser.add_argument("-zd", "--zoom-direction", metavar='DIRECTION', choices=zoom
 
 parser.add_argument("-zr", "--zoom-rate", metavar='RATE', type=float, help="Zoom rate (default:  %s)" %(zoom_rate))
 parser.add_argument("-sm", "--scale-mode", metavar='SCALE_MODE', choices=["auto", "pad", "pan", "crop_center"], help="Scale mode (pad, crop_center, pan) (default: %s)" %(scale_mode))
-parser.add_argument("-dump", "--dump-filter-graph", action='store_true', help="Dump filter graph to '<OUTPUT>.filtergraph.png' for debugging")
 parser.add_argument("-l", "--loopable", action='store_true', help="Create loopable video")
 parser.add_argument("-y", action='store_true', help="Overwrite output file without asking")
 
@@ -65,8 +63,7 @@ if args.zoom_rate:
     
 if args.scale_mode:
     scale_mode = args.scale_mode
-    
-dump_filter_graph = args.dump_filter_graph    
+      
 loopable = args.loopable
 
 overwrite = args.y    
