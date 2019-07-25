@@ -302,6 +302,10 @@ for i, slide in enumerate(slides):
     output = "out" if i == len(slides) - 1 else "ov%s" %(i)
     overlay_filter = "overlay" + ("=format=yuv420" if i == len(slides) - 1 else "")
     
+    # center the video
+    if slide["video"]:
+        overlay_filter = "overlay=(W-w)/2:(H-h)/2"
+    
     filter_chains.append("[%s][%s]%s[%s]" %(input_1, input_2, overlay_filter, output))
     
     
