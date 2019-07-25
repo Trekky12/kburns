@@ -19,6 +19,8 @@ zoom_direction = "random"
 scale_mode = "auto"
 loopable = False
 overwrite = False
+generate_temp = False
+delete_temp = False
 
 parser = argparse.ArgumentParser()
 
@@ -35,6 +37,8 @@ parser.add_argument("-zr", "--zoom-rate", metavar='RATE', type=float, help="Zoom
 parser.add_argument("-sm", "--scale-mode", metavar='SCALE_MODE', choices=["auto", "pad", "pan", "crop_center"], help="Scale mode (pad, crop_center, pan) (default: %s)" %(scale_mode))
 parser.add_argument("-l", "--loopable", action='store_true', help="Create loopable video")
 parser.add_argument("-y", action='store_true', help="Overwrite output file without asking")
+parser.add_argument("-t", "--temp", action='store_true', help="Generate temporary files")
+parser.add_argument("-d", "--delete-temp", action='store_true', help="Generate temporary files")
 
 parser.add_argument("input_files", nargs='*')
 parser.add_argument("output_file")
@@ -67,6 +71,8 @@ if args.scale_mode is not None:
 loopable = args.loopable
 
 overwrite = args.y    
+generate_temp = args.temp
+delete_temp = args.delete_temp
    
 if zoom_direction == "random":
     x_directions = ["left", "right"]
@@ -164,8 +170,9 @@ filter_chains = [
 #       IMAGES
 # =====================================    
 
+tempfiles = []
 # create zoom/pan effect of images
-for slide in [slide for slide in slides if slide["video"] is not True]:
+for i, slide in enumerate([slide for slide in slides if slide["video"] is not True]):
     slide_filters = ["format=pix_fmts=yuva420p"]
 
     ratio = slide["width"]/slide["height"]
@@ -265,8 +272,28 @@ for slide in [slide for slide in slides if slide["video"] is not True]:
         crop_y = "(ih-oh)/2"
         slide_filters.append("crop=w=%s:h=%s:x='%s':y='%s'" %(output_width, output_height, crop_x, crop_y))
         
-    # save the filters for rendering
-    slide["filters"] = slide_filters
+
+    # Generate temp video with Ken Burns effect
+    if generate_temp:
+        slide["tempvideo"] = "temp-kburns-%s.mp4" %(i)
+        cmd = [
+            ffmpeg, "-y", "-hide_banner", "-v", "quiet",
+            "-i", slide["file"],
+            "-filter_complex", ",".join(slide_filters),
+            "-crf", "0" ,"-preset", "ultrafast", "-tune", "stillimage",
+            "-c:v", "libx264", slide["tempvideo"]
+        ]
+
+        # re-use existing temp file
+        if not os.path.exists(slide["tempvideo"]):
+            os.system(" ".join(cmd))
+
+        slide["file"] = slide["tempvideo"]
+        tempfiles.append(slide["tempvideo"])
+
+    # or save the filters for rendering
+    else:
+        slide["filters"] = slide_filters
 
 # =====================================    
 #       IMAGE AND VIDEOS
@@ -275,11 +302,12 @@ for slide in [slide for slide in slides if slide["video"] is not True]:
 for i, slide in enumerate(slides):    
     filters = []
     
-    # include the ken-burns effect image filters
-    if not slide["video"]:
+    # include the ken-burns effect image filters if no temporary videos where created
+    if not slide["video"] and not generate_temp:
         filters.extend(slide["filters"])
+
     # scale video to fit the width
-    else:
+    if slide["video"]:
         filters.append("scale=w=%s:h=-1" %(output_width))
         
     # Fade filter   
@@ -389,3 +417,7 @@ cmd = [ ffmpeg, "-hide_banner",
 ]
 
 os.system(" ".join(cmd))
+
+if delete_temp:
+    for temp in tempfiles:
+        os.remove(temp)
