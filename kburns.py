@@ -286,7 +286,7 @@ for i, slide in enumerate([slide for slide in slides if slide["video"] is not Tr
 
         # re-use existing temp file
         if not os.path.exists(slide["tempvideo"]):
-            os.system(" ".join(cmd))
+            subprocess.call(" ".join(cmd))
 
         slide["file"] = slide["tempvideo"]
         tempfiles.append(slide["tempvideo"])
@@ -416,7 +416,7 @@ cmd = [ ffmpeg, "-hide_banner",
          args.output_file
 ]
 
-os.system(" ".join(cmd))
+subprocess.call(" ".join(cmd))
 
 if delete_temp:
     for temp in tempfiles:
