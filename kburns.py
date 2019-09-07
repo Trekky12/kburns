@@ -251,7 +251,7 @@ for i, slide in enumerate([slide for slide in slides if slide["video"] is not Tr
     if slide["direction_z"] == "in":
         z = "if(eq(on,1),%s,zoom+%s)" %(z_initial, z_step)
     elif slide["direction_z"] == "out":
-      "if(eq(on,1),%s,zoom-%s)" %(z_initial+z_rate, z_step)
+        z = "if(eq(on,1),%s,zoom-%s)" %(z_initial+z_rate, z_step)
 
       
     width = 0
